@@ -15,12 +15,15 @@ from datetime import date, datetime, time
 
 import folium
 import geopandas as gpd
-import networkx as nx
 import osmnx as ox
+import pandas as pd
 import streamlit as st
 from pvlib.solarposition import get_solarposition
 from streamlit_folium import st_folium
 
+from shadenav.routing import build_samples as _build_samples
+from shadenav.routing import route as _route_by_node
+from shadenav.routing import score_edges
 from shadenav.shadows import shadow_at
 
 CHICO_LAT, CHICO_LON, CHICO_TZ = 39.7285, -121.8375, "America/Los_Angeles"
@@ -48,15 +51,7 @@ def load_data():
 @st.cache_data
 def build_samples(spacing_m=10):
     G, _ = load_data()
-    edges = ox.graph_to_gdfs(G, nodes=False)
-    rows = []
-    for (u, v, k), row in edges.iterrows():
-        line = row.geometry
-        n = max(int(line.length // spacing_m), 1)
-        for i in range(n + 1):
-            rows.append({"u": u, "v": v, "k": k,
-                         "geometry": line.interpolate(i / n, normalized=True)})
-    return gpd.GeoDataFrame(rows, crs=edges.crs)
+    return _build_samples(G, spacing_m)
 
 
 @st.cache_data
@@ -65,40 +60,17 @@ def score_for_time(when: datetime):
     G, buildings = load_data()
     samples = build_samples()
     shadow = shadow_at(buildings, when)
-
-    scores = {}
-    if shadow is None:                       # sun down: nothing to avoid
-        for u, v, k in G.edges(keys=True):
-            scores[(u, v, k)] = 0.0
-        return scores
-
-    inside = samples.within(shadow)
-    tmp = samples.assign(shaded=inside.values)
-    frac_shaded = tmp.groupby(["u", "v", "k"])["shaded"].mean()
-
-    for u, v, k in G.edges(keys=True):
-        scores[(u, v, k)] = 1.0 - float(frac_shaded.get((u, v, k), 0.0))
-    return scores
+    return score_edges(G, samples, shadow)
 
 
 def route(G, scores, orig_pt, dest_pt, lam):
     orig = ox.distance.nearest_nodes(G, orig_pt[0], orig_pt[1])
     dest = ox.distance.nearest_nodes(G, dest_pt[0], dest_pt[1])
-    for u, v, k, d in G.edges(keys=True, data=True):
-        d["cost"] = d["length"] * (1 + lam * scores.get((u, v, k), 1.0))
-    path = nx.shortest_path(G, orig, dest, weight="cost")
-
-    length = sum(min(G[u][v][kk]["length"] for kk in G[u][v])
-                 for u, v in zip(path[:-1], path[1:]))
-    sun_m = sum(min(G[u][v][kk]["length"] * scores.get((u, v, kk), 1.0)
-                    for kk in G[u][v])
-                for u, v in zip(path[:-1], path[1:]))
-    return path, length, sun_m
+    return _route_by_node(G, scores, orig, dest, lam)
 
 
 def daylight_bounds(d: date):
     """Sunrise/sunset hours, so the time slider stays in daylight."""
-    import pandas as pd
     times = pd.date_range(f"{d} 04:00", f"{d} 21:00", freq="15min", tz=CHICO_TZ)
     sp = get_solarposition(times, CHICO_LAT, CHICO_LON)
     up = sp[sp["apparent_elevation"] > 3]

@@ -18,6 +18,9 @@ Outputs (in data/, tagged by --tag):
     tradeoff_curve_<tag>.png      the figure
 """
 
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from __future__ import annotations
 
 import argparse
@@ -31,6 +34,7 @@ import numpy as np
 import osmnx as ox
 import pandas as pd
 
+from shadenav.routing import build_samples, route, score_edges
 from shadenav.shadows import shadow_at
 
 # --- experiment settings -------------------------------------------------
@@ -41,41 +45,6 @@ LAMBDAS = [0, 0.1, 0.2, 0.3, 0.5, 0.75, 1, 1.5, 2, 3, 5]
 WHEN = datetime(2025, 9, 15, 9)                   # 9am mid-September, long shadows
 STREETS = "data/streets.graphml"
 BUILDINGS = "data/buildings.gpkg"
-
-
-# --- pipeline pieces (kept identical to the app) -------------------------
-def build_samples(G, spacing_m=10):
-    edges = ox.graph_to_gdfs(G, nodes=False)
-    rows = []
-    for (u, v, k), row in edges.iterrows():
-        line = row.geometry
-        n = max(int(line.length // spacing_m), 1)
-        for i in range(n + 1):
-            rows.append({"u": u, "v": v, "k": k,
-                         "geometry": line.interpolate(i / n, normalized=True)})
-    return gpd.GeoDataFrame(rows, crs=edges.crs)
-
-
-def score_edges(G, samples, shadow):
-    if shadow is None:
-        return {(u, v, k): 0.0 for u, v, k in G.edges(keys=True)}
-    inside = samples.within(shadow)
-    tmp = samples.assign(shaded=inside.values)
-    frac = tmp.groupby(["u", "v", "k"])["shaded"].mean()
-    return {(u, v, k): 1.0 - float(frac.get((u, v, k), 0.0))
-            for u, v, k in G.edges(keys=True)}
-
-
-def route(G, scores, orig, dest, lam):
-    for u, v, k, d in G.edges(keys=True, data=True):
-        d["cost"] = d["length"] * (1 + lam * scores.get((u, v, k), 1.0))
-    path = nx.shortest_path(G, orig, dest, weight="cost")
-    length = sum(min(G[u][v][kk]["length"] for kk in G[u][v])
-                 for u, v in zip(path[:-1], path[1:]))
-    sun_m = sum(min(G[u][v][kk]["length"] * scores.get((u, v, kk), 1.0)
-                    for kk in G[u][v])
-                for u, v in zip(path[:-1], path[1:]))
-    return length, sun_m
 
 
 # --- experiment ----------------------------------------------------------
@@ -109,11 +78,11 @@ def run(tag):
 
     rows, t0 = [], time.time()
     for i, (o, d) in enumerate(pairs):
-        base_len, base_sun = route(G, scores, o, d, lam=0)
+        _, base_len, base_sun = route(G, scores, o, d, lam=0)
         if base_len == 0:
             continue
         for lam in LAMBDAS:
-            length, sun_m = route(G, scores, o, d, lam=lam)
+            _, length, sun_m = route(G, scores, o, d, lam=lam)
             rows.append({
                 "pair": i, "lambda": lam, "length_m": length, "sun_m": sun_m,
                 "extra_dist_pct": 100 * (length - base_len) / base_len,
