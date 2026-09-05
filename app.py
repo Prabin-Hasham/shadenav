@@ -146,9 +146,10 @@ path_shade, len_h, sun_h = route(G, scores, orig_pt, dest_pt, lam=lam)
 col_map, col_stats = st.columns([3, 1])
 
 with col_stats:
-    st.metric("Shortest route", f"{len_s:.0f} m", f"{100*sun_s/len_s:.0f}% in sun")
+    st.metric("Shortest route", f"{len_s:.0f} m")
+    st.caption(f"{100*sun_s/len_s:.0f}% in sun")
     st.metric("Shady route", f"{len_h:.0f} m",
-              f"{100*sun_h/len_h:.0f}% in sun", delta_color="inverse")
+              f"-{100*sun_h/len_h:.0f}% in sun", delta_color="inverse")
     extra = 100 * (len_h - len_s) / len_s if len_s else 0
     saved = 100 * (sun_s - sun_h) / sun_s if sun_s else 0
     st.write(f"The shady route is **{extra:.0f}% longer** "
