@@ -147,9 +147,11 @@ col_map, col_stats = st.columns([3, 1])
 
 with col_stats:
     st.metric("Shortest route", f"{len_s:.0f} m")
-    st.caption(f"{100*sun_s/len_s:.0f}% in sun")
-    st.metric("Shady route", f"{len_h:.0f} m",
-              f"-{100*sun_h/len_h:.0f}% in sun", delta_color="inverse")
+    st.markdown(f"<span style='color:#ff2b2b'>{100*sun_s/len_s:.0f}% in sun</span>",
+                unsafe_allow_html=True)
+    st.metric("Shady route", f"{len_h:.0f} m")
+    st.markdown(f"<span style='color:#09ab3b'>&#9660; {100*sun_h/len_h:.0f}% in sun</span>",
+                unsafe_allow_html=True)
     extra = 100 * (len_h - len_s) / len_s if len_s else 0
     saved = 100 * (sun_s - sun_h) / sun_s if sun_s else 0
     st.write(f"The shady route is **{extra:.0f}% longer** "
@@ -192,4 +194,4 @@ with col_map:
 
     folium.LayerControl(position="bottomright", collapsed=True).add_to(m)
 
-    folium_static(m, height=560)
+    folium_static(m, height=560, width=None)
