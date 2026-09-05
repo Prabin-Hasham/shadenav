@@ -18,14 +18,15 @@ Outputs (in data/, tagged by --tag):
     tradeoff_curve_<tag>.png      the figure
 """
 
-import sys, os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from __future__ import annotations
 
 import argparse
+import os
+import sys
 import time
 from datetime import datetime
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import geopandas as gpd
 import matplotlib.pyplot as plt

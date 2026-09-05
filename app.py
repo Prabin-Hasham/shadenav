@@ -111,9 +111,11 @@ with st.sidebar:
     the_date = st.date_input("Date", value=date.today())
     lo, hi = daylight_bounds(the_date)
     now_hour = min(max(datetime.now().hour, lo), hi)
-    the_hour = st.slider("Time of day", lo, hi, now_hour,
-                         help="Shadows shift through the day, so the shady "
-                              "route changes with the sun.")
+    the_hour = st.select_slider(
+        "Time of day", options=range(lo, hi + 1), value=now_hour,
+        format_func=lambda h: time(h).strftime("%I %p").lstrip("0"),
+        help="Shadows shift through the day, so the shady "
+             "route changes with the sun.")
 
     st.header("How much do you care about shade?")
     lam = st.slider("Shade preference", 0.0, 3.0, 1.5, 0.1,
