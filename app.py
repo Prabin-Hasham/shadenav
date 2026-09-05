@@ -157,7 +157,17 @@ with col_stats:
 with col_map:
     ctr = nodes.to_crs(4326).geometry
     m = folium.Map(location=[ctr.y.mean(), ctr.x.mean()], zoom_start=15,
-                   tiles="OpenStreetMap")
+                   tiles="OpenStreetMap", name="Streets")
+
+    folium.TileLayer(
+        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+        attr="Esri", name="Light", overlay=False, control=True,
+    ).add_to(m)
+
+    folium.TileLayer(
+        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        attr="Esri", name="Satellite", overlay=False, control=True,
+    ).add_to(m)
 
     shadow = shadow_at(buildings, when)
     if shadow is not None:
@@ -175,5 +185,7 @@ with col_map:
                   icon=folium.Icon(color="green")).add_to(m)
     folium.Marker(to_latlon(G, path_short)[-1], tooltip="End",
                   icon=folium.Icon(color="red")).add_to(m)
+
+    folium.LayerControl(collapsed=False).add_to(m)
 
     folium_static(m, height=560)
