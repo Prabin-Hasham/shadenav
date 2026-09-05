@@ -6,6 +6,9 @@ Deploys as-is on Streamlit Community Cloud from the GitHub repo.
 Streamlit reruns this whole script top to bottom every time a widget changes,
 so anything slow (loading data, casting shadows, scoring streets) is wrapped
 in @st.cache_* and only recomputes when its inputs change.
+
+Start/end points are set by clicking the map: first click = start, second =
+end. They are stored in st.session_state so they survive Streamlit's reruns.
 """
 
 from datetime import date, datetime, time
@@ -16,13 +19,18 @@ import networkx as nx
 import osmnx as ox
 import streamlit as st
 from pvlib.solarposition import get_solarposition
-from streamlit_folium import folium_static
+from streamlit_folium import st_folium
 
 from shadenav.shadows import shadow_at
 
 CHICO_LAT, CHICO_LON, CHICO_TZ = 39.7285, -121.8375, "America/Los_Angeles"
 
 st.set_page_config(page_title="shadenav", page_icon="🌤", layout="wide")
+
+if "start_pt" not in st.session_state:
+    st.session_state.start_pt = None
+if "end_pt" not in st.session_state:
+    st.session_state.end_pt = None
 
 
 # --------------------------------------------------------------------------
@@ -52,8 +60,8 @@ def build_samples(spacing_m=10):
 
 
 @st.cache_data
-def score_for_time(when: datetime, cloud_cover: float = 0.0):
-    """{edge_key: sun_fraction} for a moment. cloud_cover scales sun down."""
+def score_for_time(when: datetime):
+    """{edge_key: sun_fraction} for a moment."""
     G, buildings = load_data()
     samples = build_samples()
     shadow = shadow_at(buildings, when)
@@ -69,8 +77,7 @@ def score_for_time(when: datetime, cloud_cover: float = 0.0):
     frac_shaded = tmp.groupby(["u", "v", "k"])["shaded"].mean()
 
     for u, v, k in G.edges(keys=True):
-        sun = 1.0 - float(frac_shaded.get((u, v, k), 0.0))
-        scores[(u, v, k)] = sun * (1.0 - cloud_cover)   # weather hook
+        scores[(u, v, k)] = 1.0 - float(frac_shaded.get((u, v, k), 0.0))
     return scores
 
 
@@ -105,6 +112,19 @@ def to_latlon(G, path):
     return [(nodes.loc[n].geometry.y, nodes.loc[n].geometry.x) for n in path]
 
 
+def latlon_to_utm(lat, lon):
+    """A clicked lat/lon -> (x, y) in the graph's UTM CRS."""
+    p = gpd.GeoSeries([gpd.points_from_xy([lon], [lat])[0]],
+                      crs=4326).to_crs("EPSG:32610").iloc[0]
+    return (p.x, p.y)
+
+
+def utm_to_latlon(pt):
+    """A stored (x, y) UTM point -> shapely point in lat/lon for display."""
+    return gpd.GeoSeries([gpd.points_from_xy([pt[0]], [pt[1]])[0]],
+                         crs="EPSG:32610").to_crs(4326).iloc[0]
+
+
 # --------------------------------------------------------------------------
 # Interface
 # --------------------------------------------------------------------------
@@ -128,47 +148,55 @@ with st.sidebar:
                     help="0 = shortest path. Higher = accept longer detours "
                          "to stay out of the sun.")
 
-    st.header("Sky")
-    sky = st.select_slider("Conditions",
-                           ["Clear", "Partly cloudy", "Overcast"], value="Clear")
-    cloud = {"Clear": 0.0, "Partly cloudy": 0.4, "Overcast": 0.9}[sky]
+    st.header("Route")
+    if st.button("Clear points"):
+        st.session_state.start_pt = None
+        st.session_state.end_pt = None
+        st.rerun()
+    if st.session_state.start_pt is None:
+        st.caption("Click the map to set your START point.")
+    elif st.session_state.end_pt is None:
+        st.caption("Now click to set your END point.")
+    else:
+        st.caption("Routing. Click 'Clear points' to start over.")
 
 when = datetime.combine(the_date, time(the_hour, 0))
-scores = score_for_time(when, cloud_cover=cloud)
-
+scores = score_for_time(when)
 nodes = ox.graph_to_gdfs(G, edges=False)
-orig_pt = (nodes.geometry.x.min(), nodes.geometry.y.min())
-dest_pt = (nodes.geometry.x.max(), nodes.geometry.y.max())
 
-path_short, len_s, sun_s = route(G, scores, orig_pt, dest_pt, lam=0)
-path_shade, len_h, sun_h = route(G, scores, orig_pt, dest_pt, lam=lam)
+have_both = bool(st.session_state.start_pt and st.session_state.end_pt)
+if have_both:
+    path_short, len_s, sun_s = route(G, scores, st.session_state.start_pt,
+                                     st.session_state.end_pt, lam=0)
+    path_shade, len_h, sun_h = route(G, scores, st.session_state.start_pt,
+                                     st.session_state.end_pt, lam=lam)
 
 col_map, col_stats = st.columns([3, 1])
 
 with col_stats:
-    st.metric("Shortest route", f"{len_s:.0f} m")
-    st.markdown(f"<span style='color:#ff2b2b'>{100*sun_s/len_s:.0f}% in sun</span>",
-                unsafe_allow_html=True)
-    st.metric("Shady route", f"{len_h:.0f} m")
-    st.markdown(f"<span style='color:#09ab3b'>&#9660; {100*sun_h/len_h:.0f}% in sun</span>",
-                unsafe_allow_html=True)
-    extra = 100 * (len_h - len_s) / len_s if len_s else 0
-    saved = 100 * (sun_s - sun_h) / sun_s if sun_s else 0
-    st.write(f"The shady route is **{extra:.0f}% longer** "
-             f"and cuts sun exposure by **{saved:.0f}%**.")
+    if have_both:
+        st.metric("Shortest route", f"{len_s:.0f} m")
+        st.markdown(f"<span style='color:#ff2b2b'>{100*sun_s/len_s:.0f}% in sun</span>",
+                    unsafe_allow_html=True)
+        st.metric("Shady route", f"{len_h:.0f} m")
+        st.markdown(f"<span style='color:#09ab3b'>&#9660; {100*sun_h/len_h:.0f}% in sun</span>",
+                    unsafe_allow_html=True)
+        extra = 100 * (len_h - len_s) / len_s if len_s else 0
+        saved = 100 * (sun_s - sun_h) / sun_s if sun_s else 0
+        st.write(f"The shady route is **{extra:.0f}% longer** "
+                 f"and cuts sun exposure by **{saved:.0f}%**.")
+    else:
+        st.info("Click two points on the map to see routes.")
 
 with col_map:
     ctr = nodes.to_crs(4326).geometry
     m = folium.Map(location=[ctr.y.mean(), ctr.x.mean()], zoom_start=15,
                    tiles=None)
-
     folium.TileLayer("OpenStreetMap", name="Street map").add_to(m)
-
     folium.TileLayer(
         tiles="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
         attr="Esri", name="Minimal (grey)", overlay=False, control=True,
     ).add_to(m)
-
     folium.TileLayer(
         tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
         attr="Esri", name="Satellite", overlay=False, control=True,
@@ -183,15 +211,37 @@ with col_map:
                                       "fillOpacity": 0.35},
         ).add_to(m)
 
-    folium.PolyLine(to_latlon(G, path_short), color="#d08770", weight=5,
-                    opacity=0.9, tooltip="Shortest").add_to(m)
-    folium.PolyLine(to_latlon(G, path_shade), color="#5e81ac", weight=5,
-                    opacity=0.9, tooltip="Shady").add_to(m)
-    folium.Marker(to_latlon(G, path_short)[0], tooltip="Start",
-                  icon=folium.Icon(color="green")).add_to(m)
-    folium.Marker(to_latlon(G, path_short)[-1], tooltip="End",
-                  icon=folium.Icon(color="red")).add_to(m)
+    # markers for whatever points are set
+    if st.session_state.start_pt:
+        p = utm_to_latlon(st.session_state.start_pt)
+        folium.Marker([p.y, p.x], tooltip="Start",
+                      icon=folium.Icon(color="green")).add_to(m)
+    if st.session_state.end_pt:
+        p = utm_to_latlon(st.session_state.end_pt)
+        folium.Marker([p.y, p.x], tooltip="End",
+                      icon=folium.Icon(color="red")).add_to(m)
+
+    # routes only once both points exist
+    if have_both:
+        folium.PolyLine(to_latlon(G, path_short), color="#d08770", weight=5,
+                        opacity=0.9, tooltip="Shortest").add_to(m)
+        folium.PolyLine(to_latlon(G, path_shade), color="#5e81ac", weight=5,
+                        opacity=0.9, tooltip="Shady").add_to(m)
 
     folium.LayerControl(position="bottomright", collapsed=True).add_to(m)
 
-    folium_static(m, height=560, width=None)
+    map_data = st_folium(m, height=560, width=None,
+                         returned_objects=["last_clicked"])
+
+# handle a click: fill start, then end
+if map_data and map_data.get("last_clicked"):
+    lat = map_data["last_clicked"]["lat"]
+    lon = map_data["last_clicked"]["lng"]
+    pt = latlon_to_utm(lat, lon)
+
+    if st.session_state.start_pt is None:
+        st.session_state.start_pt = pt
+        st.rerun()
+    elif st.session_state.end_pt is None and pt != st.session_state.start_pt:
+        st.session_state.end_pt = pt
+        st.rerun()
