@@ -100,9 +100,12 @@ def utm_to_latlon(pt):
 # --------------------------------------------------------------------------
 # Interface
 # --------------------------------------------------------------------------
+SHORT_COLOR, SHADE_COLOR = "#d08770", "#5e81ac"   # match the map polylines
+
 st.title("shadenav")
-st.caption("Walking routes that trade a little distance for a lot less sun. "
-           "Chico State campus.")
+st.markdown("<p style='font-size:1.15rem; color:gray;'>"
+            "Walking routes that trade a little distance for a lot less sun. "
+            "Chico State campus.</p>", unsafe_allow_html=True)
 
 G, buildings = load_data()
 
@@ -149,16 +152,23 @@ col_map, col_stats = st.columns([3, 1])
 
 with col_stats:
     if have_both:
-        st.metric("Shortest route", f"{len_s:.0f} m")
-        st.markdown(f"<span style='color:#ff2b2b'>{100*sun_s/len_s:.0f}% in sun</span>",
-                    unsafe_allow_html=True)
-        st.metric("Shady route", f"{len_h:.0f} m")
-        st.markdown(f"<span style='color:#09ab3b'>&#9660; {100*sun_h/len_h:.0f}% in sun</span>",
-                    unsafe_allow_html=True)
+        def route_block(label, color, length, sun_pct, arrow=""):
+            st.markdown(f"""
+                <div style='margin-bottom:1.2rem'>
+                  <div style='font-size:1.2rem; font-weight:600; color:{color}'>{label}</div>
+                  <div style='font-size:2.2rem; font-weight:700; line-height:1.2'>{length:.0f} m</div>
+                  <div style='font-size:1.3rem; color:{color}'>{arrow}{sun_pct:.0f}% in sun</div>
+                </div>
+            """, unsafe_allow_html=True)
+
+        route_block("Shortest route", SHORT_COLOR, len_s, 100 * sun_s / len_s)
+        route_block("Shady route", SHADE_COLOR, len_h, 100 * sun_h / len_h, arrow="&#9660; ")
+
         extra = 100 * (len_h - len_s) / len_s if len_s else 0
         saved = 100 * (sun_s - sun_h) / sun_s if sun_s else 0
-        st.write(f"The shady route is **{extra:.0f}% longer** "
-                 f"and cuts sun exposure by **{saved:.0f}%**.")
+        st.markdown(f"<p style='font-size:1.2rem'>The shady route is "
+                    f"<b>{extra:.0f}% longer</b> and cuts sun exposure by "
+                    f"<b>{saved:.0f}%</b>.</p>", unsafe_allow_html=True)
     else:
         st.info("Click two points on the map to see routes.")
 
@@ -197,9 +207,9 @@ with col_map:
 
     # routes only once both points exist
     if have_both:
-        folium.PolyLine(to_latlon(G, path_short), color="#d08770", weight=5,
+        folium.PolyLine(to_latlon(G, path_short), color=SHORT_COLOR, weight=5,
                         opacity=0.9, tooltip="Shortest").add_to(m)
-        folium.PolyLine(to_latlon(G, path_shade), color="#5e81ac", weight=5,
+        folium.PolyLine(to_latlon(G, path_shade), color=SHADE_COLOR, weight=5,
                         opacity=0.9, tooltip="Shady").add_to(m)
 
     folium.LayerControl(position="bottomright", collapsed=True).add_to(m)
